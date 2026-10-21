@@ -40,6 +40,10 @@ export const SCHEDULING_NICHES: readonly NicheKey[] = [
   "pet_shops",
 ];
 
+export function isNicheKey(value: unknown): value is NicheKey {
+  return typeof value === "string" && NICHES.some((n) => n.key === value);
+}
+
 export function getNiche(key: string): Niche | undefined {
   return NICHES.find((n) => n.key === key);
 }
