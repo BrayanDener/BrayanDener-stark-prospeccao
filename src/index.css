@@ -1,0 +1,151 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Stark IA — tokens de design (tema escuro único).
+ * Valores em HSL sem alpha para funcionar com os modificadores de opacidade do Tailwind.
+ */
+@layer base {
+  :root {
+    --background: 219 59% 6%; /* #060C17 marinho quase preto */
+    --surface: 214 61% 11%; /* #0B1A2E marinho Stark (cards) */
+    --surface-2: 215 54% 15%; /* #12243D inputs, hover */
+    --border: 218 62% 74%; /* rgba(148,178,230) — usada com 10% de opacidade */
+
+    --foreground: 215 55% 96%; /* #EEF3FA texto principal */
+    --muted-foreground: 217 23% 66%; /* #93A3BC texto secundário */
+    --tertiary: 217 18% 45%; /* #5E6E87 só ícones/decoração (3,4:1 não passa AA em texto) */
+
+    --primary: 217 91% 60%; /* #3B82F6 azul Stark: destaque, anéis, foco, linha de luz */
+    --primary-hover: 213 94% 68%; /* #60A5FA hover de links e ícones */
+    --primary-solid: 221 83% 53%; /* #2563EB fundo de botões (texto branco 5,2:1) */
+    --primary-solid-hover: 221 88% 56%; /* #2E6EF2 hover de botões (4,5:1) */
+    --primary-foreground: 0 0% 100%;
+    --ring: 217 91% 60%;
+
+    --success: 158 64% 52%; /* #34D399 */
+    --warning: 43 96% 56%; /* #FBBF24 */
+    --danger: 0 91% 71%; /* #F87171 */
+    --violet: 252 95% 85%; /* #C4B5FD badge "Respondeu" */
+    --whatsapp: 142 70% 49%; /* #25D366 só no ícone */
+
+    --radius: 0.75rem;
+    --nav-height: 4rem;
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-top: env(safe-area-inset-top, 0px);
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    color-scheme: dark;
+    -webkit-tap-highlight-color: transparent;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background font-sans text-sm text-foreground antialiased;
+    min-height: 100dvh;
+    overflow-x: hidden;
+    /* Gradiente radial muito sutil a partir do topo */
+    background-image: radial-gradient(120% 60% at 50% -10%, hsl(var(--surface)) 0%, hsl(var(--background)) 70%);
+    background-attachment: fixed;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  h1, h2, h3, h4 {
+    @apply font-display tracking-tightish;
+  }
+
+  /* Inputs com 16px no mobile evitam o zoom automático do iOS */
+  input, textarea, select {
+    font-size: 16px;
+  }
+  @media (min-width: 768px) {
+    input, textarea, select {
+      font-size: 14px;
+    }
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.35);
+  }
+}
+
+@layer components {
+  /* "Vidro marinho": surface + borda fina + reflexo de 4% no primeiro pixel */
+  .glass {
+    @apply rounded-lg border bg-surface;
+    background-image: linear-gradient(to bottom, rgb(255 255 255 / 0.04), rgb(255 255 255 / 0) 1px);
+  }
+
+  /* Assinatura Stark: linha de luz de 1px */
+  .light-line {
+    height: 1px;
+    background: linear-gradient(90deg, transparent 0%, hsl(var(--primary) / 0.15) 12%, hsl(var(--primary)) 50%, hsl(var(--primary) / 0.15) 88%, transparent 100%);
+    box-shadow: 0 0 8px 0 hsl(var(--primary) / 0.45);
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .pb-nav {
+    padding-bottom: calc(var(--nav-height) + var(--safe-bottom) + 1.5rem);
+  }
+  @media (min-width: 768px) {
+    .pb-nav {
+      padding-bottom: 3rem;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Mapa (Leaflet) no tema Stark */
+.leaflet-container {
+  font-family: Inter, system-ui, sans-serif;
+  background: hsl(var(--background));
+}
+.leaflet-bar a,
+.leaflet-bar a:hover {
+  background: hsl(var(--surface));
+  color: hsl(var(--foreground));
+  border-color: hsl(var(--border) / 0.18);
+}
+.leaflet-control-attribution {
+  background: hsl(var(--background) / 0.8) !important;
+  color: hsl(var(--muted-foreground)) !important;
+}
+.leaflet-control-attribution a {
+  color: hsl(var(--primary-hover)) !important;
+}
+.stark-popup .leaflet-popup-content-wrapper {
+  background: hsl(var(--surface));
+  color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--border) / 0.18);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.6);
+}
+.stark-popup .leaflet-popup-tip {
+  background: hsl(var(--surface));
+}
+.stark-popup .leaflet-popup-content {
+  margin: 12px;
+  font-size: 14px;
+}
