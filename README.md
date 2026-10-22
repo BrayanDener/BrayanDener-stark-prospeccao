@@ -1,62 +1,59 @@
 # Stark Prospecção
 
-Painel pessoal de prospecção B2B da Stark IA: encontra pequenos negócios que precisam de site, marketing, automação ou app e organiza a abordagem pelo WhatsApp.
+Painel pessoal de prospecção B2B da Stark IA: encontra pequenos negócios no Google que precisam de site, marketing, automação ou app, pontua cada um e organiza a abordagem pelo WhatsApp num mini-CRM. PWA, feito para o celular.
 
-**Stack:** React 18 + TypeScript + Vite 5 + Tailwind 3 + shadcn/ui (Radix) + lucide-react + framer-motion + @dnd-kit · Backend (Etapa 2): Supabase.
+**Stack:** React 18 + TypeScript + Vite 5 + Tailwind 3 + shadcn/ui + React Query · Supabase (Auth, Postgres com RLS, Edge Functions em Deno) · Google Places API (New) + Geocoding · Claude (mensagens com IA).
+
+## Configuração (uma vez só)
+
+Projeto Supabase: **stark-prospeccao** (`fikbetwjamzkphgnoxol`, região São Paulo). Banco e funções já estão criados e publicados.
+
+1. **Usuário**: Authentication → Users → *Add user* → seu e-mail + senha, marcando *Auto Confirm User*.
+2. **Cadastro fechado**: Authentication → Sign In / Providers → desligar *Allow new users to sign up*.
+3. **Secrets** (Edge Functions → Secrets):
+   - `GOOGLE_MAPS_API_KEY`: chave do Google Cloud.
+   - `ALLOWED_EMAIL`: o mesmo e-mail do passo 1. Sem ele, as funções recusam todo mundo.
+   - `AI_API_KEY`: chave da API da Anthropic (console.anthropic.com), só para o "Gerar com IA".
+4. **Google Cloud**: ativar **Places API (New)** e **Geocoding API**; restringir a chave a essas duas APIs; criar um alerta de orçamento (Faturamento → Orçamentos e alertas).
+5. **Limpeza**: apagar os usuários de teste `teste-a/b/c@stark-teste.local` (Authentication → Users).
 
 ## Rodar
 
 ```bash
 npm install
 npm run dev        # http://localhost:8080
-npm test           # testes das regras de negócio
-npm run build      # checa tipos e gera dist/
+npm test           # 41 testes das regras de negócio
+npm run build      # checa tipos e gera dist/ (PWA)
 ```
 
-Etapa 1: qualquer e-mail válido + senha de 6+ caracteres entra (login simulado).
-Para ver o estado de erro de qualquer tela, adicione `?simular=erro` na URL.
+O app já aponta para o projeto (URL + chave publicável). Para outro projeto, use `.env` com `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY` (veja `.env.example`). Nenhuma chave secreta fica no front.
 
-## Etapas
+## Como funciona
 
-- [x] **1. Layout, design system e telas com dados de exemplo** (esta entrega)
-- [ ] 2. Supabase: Auth, tabelas com RLS, CRM persistido
-- [ ] 3. Edge Function de busca no Google Places (chave como secret) + cache + mapa
-- [ ] 4. IA nas mensagens, PWA completo e notificações
+- **Busca** (`supabase/functions/search-leads`): valida a entrada e o e-mail permitido. Busca no cache (mesma cidade + nicho dentro de `cache_days`): se achar, devolve os leads salvos sem chamar o Google. Senão: geocoding (com cache) → Text Search por palavra-chave do nicho, até 3 páginas, raio 8 → 20 → 40 km até achar 15 empresas → remove duplicados, fechados e longe demais → classifica site e telefone → grava tudo numa transação. Usa o JWT do usuário: o RLS vale também na função.
+- **Filtro e score** no front (`src/lib/filters.ts`, `src/lib/score.ts`, pesos em constantes), com a regra por serviço compartilhada em `supabase/functions/_shared/qualify.ts`.
+- **CRM** (`supabase/migrations/*_etapa3_crm.sql`): funções `set_lead_status`, `register_contact`, `set_follow_up`, `complete_follow_up`, `restore_lead_state` (Desfazer) e `dashboard_summary` / `due_followups` (contagens no banco, fuso America/Sao_Paulo).
+- **IA** (`supabase/functions/generate-message`): lê o lead no banco e gera até 350 caracteres com o Claude (`claude-opus-5-5`, esforço baixo, reserva automática em caso de recusa). Só usa os dados do lead.
+- **PWA**: `vite-plugin-pwa`; cache só dos arquivos do app; Supabase sempre pela rede; aviso "Nova versão disponível · Atualizar".
 
 ## Estrutura
 
 ```
 src/
-  config/      services.ts · status.ts · niches.ts (reexporta supabase/functions/_shared/niches.ts) · nav.ts
-  lib/         score.ts · filters.ts · phone.ts · messages.ts · hours.ts · format.ts · metrics.ts  (+ *.test.ts)
-  mocks/       33 leads escritos à mão em MG + gerador determinístico de resultados
-  store/       app-store (dados) · ui-store (wizard e painéis) · session (login simulado)
-  components/
-    ui/        shadcn adaptado aos tokens da Stark
-    stark/     ScoreRing, StatusBadge, LeadTag, MetricCard, EmptyState, ErrorState, PageHeader, LightLine, ResponsivePanel…
-    layout/    Sidebar (desktop), BottomNav + "Mais" (celular), MobileHeader
-    wizard/    SearchWizard (Dialog no desktop, Drawer em tela cheia no celular)
-    leads/     LeadCard, LeadActions, LeadDetailPanel
-    whatsapp/  WhatsAppPanel
-    crm/       KanbanBoard (arrastar no desktop, "Mover" no celular), CrmCard
-  pages/       Login, Dashboard, Leads, Crm, Historico, Modelos, Configuracoes
-supabase/functions/_shared/niches.ts   fonte única dos nichos (app + Edge Functions)
+  config/        services, status, niches (reexporta supabase/functions/_shared/niches.ts), nav
+  data/          api.ts (todas as chamadas ao Supabase) · queries.ts (React Query, otimista + Desfazer) · mappers.ts
+  integrations/  supabase/client.ts · supabase/types.ts (tipos gerados do banco)
+  lib/           score · filters · phone · messages · hours · links · errors · export-xlsx (+ testes)
+  store/         auth (Supabase Auth) · ui-store (wizard e painéis)
+  components/    ui (shadcn) · stark (design system) · layout · wizard · leads (card, detalhe, mapa) · whatsapp · crm · searches
+  pages/         Login, Dashboard, Leads, Crm, Historico, Modelos, Configuracoes
+supabase/
+  migrations/    esquema, RLS, views e funções (aplicadas no projeto)
+  functions/     search-leads · generate-message · _shared (nichos, serviços, telefone, site, filtro, http)
 ```
 
-## Regras de negócio (funções puras)
+## Segurança
 
-| Arquivo | O que faz |
-|---|---|
-| `lib/filters.ts` | Filtro por serviço (Sites: sem site próprio; Marketing: sem site **ou** < 30 avaliações; Automações/Apps: ≥ mínimo de avaliações; Design/Outro: tudo), filtros da lista, ordenação, follow-up atrasado |
-| `lib/score.ts` | Score 0–100 por serviço; cada serviço tem critérios que somam 100 e alimentam "Por que esse score?" |
-| `lib/phone.ts` | Normaliza telefone BR, separa celular/fixo, formata e gera links `wa.me` e `tel:` |
-| `lib/messages.ts` | Variáveis `{{empresa}}`, `{{cidade}}`, `{{nicho}}`, `{{nota}}`, `{{avaliacoes}}`, `{{assinatura}}` |
-
-Perfis só de Instagram/Linktree contam como **sem site** (é o lead ideal para Criação de Sites).
-
-## Decisões de design
-
-- **Contraste AA:** `#3B82F6` continua sendo a cor de destaque (anéis, foco, linha de luz, links). Botões preenchidos usam `#2563EB` (texto branco 5,2:1; o `#3B82F6` daria 3,7:1). O cinza terciário `#5E6E87` (3,4:1) é usado só em ícones e decoração, nunca em texto.
-- **Botão WhatsApp:** fundo azul suave com o ícone verde. O verde sobre o azul sólido não atinge 3:1.
-- **CRM ≠ resultados de busca:** um lead entra no CRM quando você muda o status, anota, agenda follow-up ou toca em "Adicionar ao CRM". Assim o Kanban não fica com centenas de "Novos".
-- **Segurança:** nenhuma chave no front-end. A chave do Google será um secret do Supabase lido só pela Edge Function.
+- RLS em todas as tabelas (`user_id = auth.uid()`), inclusive conferindo que lead e busca referenciados também são do usuário. O papel `anon` não lê nada.
+- Edge Functions: JWT obrigatório + `ALLOWED_EMAIL` (fecha por padrão).
+- Chaves do Google e da IA só em secrets do Supabase. `grep -r AIza dist` não encontra nada.

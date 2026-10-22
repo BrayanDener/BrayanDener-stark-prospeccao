@@ -52,10 +52,12 @@ export default defineConfig({
   },
   server: { host: true, port: 8080 },
   build: {
+    // O único arquivo grande é o exceljs, carregado só ao exportar.
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
       output: {
         manualChunks: {
-          react: ["react", "react-dom", "react-router-dom"],
+          react: ["react", "react-dom", "react-router-dom", "@tanstack/react-query"],
           radix: [
             "@radix-ui/react-dialog",
             "@radix-ui/react-dropdown-menu",
@@ -65,7 +67,7 @@ export default defineConfig({
             "vaul",
           ],
           motion: ["framer-motion"],
-          data: ["@supabase/supabase-js", "@tanstack/react-query"],
+          supabase: ["@supabase/supabase-js"],
         },
       },
     },
