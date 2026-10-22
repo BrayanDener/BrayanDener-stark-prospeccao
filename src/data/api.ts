@@ -73,20 +73,20 @@ export async function fetchSearches(opts: { limit: number; offset?: number }): P
   const rows = await run("searches.list", () =>
     supabase.from("searches").select("*").order("created_at", { ascending: false }).range(from, from + opts.limit - 1),
   );
-  return rows.map(toSearch);
+  return (rows ?? []).map(toSearch);
 }
 
 // ───────────────────────── Leads ─────────────────────────
 
 export async function fetchSearchLeads(searchId: string): Promise<Lead[]> {
   const rows = await run("get_search_leads", () => supabase.rpc("get_search_leads", { p_search_id: searchId }));
-  return rows.map(toLead);
+  return (rows ?? []).map(toLead);
 }
 
 /** Todos os leads (até 1000, mais recentes primeiro). */
 export async function fetchAllLeads(): Promise<Lead[]> {
   const rows = await run("v_leads.all", () => supabase.from("v_leads").select("*").order("first_seen_at", { ascending: false }).limit(1000));
-  return rows.map(toLead);
+  return (rows ?? []).map(toLead);
 }
 
 export async function fetchLead(id: string): Promise<Lead | null> {
@@ -120,7 +120,7 @@ export async function fetchCrmPage(q: CrmQuery, page: number, todayStartIso: str
       .order("first_seen_at", { ascending: false })
       .range(from, from + CRM_PAGE_SIZE - 1);
   });
-  return rows.map(toLead);
+  return (rows ?? []).map(toLead);
 }
 
 /** Kanban: todos fora de "novo" + os N "novos" mais recentes (a coluna Novo pagina). */
@@ -129,12 +129,12 @@ export async function fetchKanban(newLimit: number): Promise<Lead[]> {
     run("kanban.ativos", () => supabase.from("v_leads").select("*").neq("status", "novo").order("status_updated_at", { ascending: false }).limit(1000)),
     run("kanban.novos", () => supabase.from("v_leads").select("*").eq("status", "novo").order("first_seen_at", { ascending: false }).limit(newLimit)),
   ]);
-  return [...active, ...fresh].map(toLead);
+  return [...(active ?? []), ...(fresh ?? [])].map(toLead);
 }
 
 export async function fetchDueFollowups(limit = 50): Promise<Lead[]> {
   const rows = await run("due_followups", () => supabase.rpc("due_followups", { p_limit: limit }));
-  return rows.map(toLead);
+  return (rows ?? []).map(toLead);
 }
 
 // ───────────────────────── CRM (ações com "Desfazer") ─────────────────────────
@@ -171,7 +171,7 @@ export async function fetchActivities(leadId: string): Promise<Activity[]> {
   const rows = await run("lead_activities.list", () =>
     supabase.from("lead_activities").select("*").eq("lead_id", leadId).order("created_at", { ascending: false }).limit(100),
   );
-  return rows.map(toActivity);
+  return (rows ?? []).map(toActivity);
 }
 
 // ───────────────────────── Dashboard ─────────────────────────
@@ -211,7 +211,7 @@ export async function saveSettings(s: Settings): Promise<Settings> {
 
 export async function fetchTemplates(): Promise<MessageTemplate[]> {
   const rows = await run("message_templates.list", () => supabase.from("message_templates").select("*").order("service").order("niche", { nullsFirst: true }));
-  return rows.map(toTemplate);
+  return (rows ?? []).map(toTemplate);
 }
 
 export async function saveTemplate(t: { id?: string; service: ServiceKey; niche: NicheKey | null; title: string; body: string; isDefault?: boolean }): Promise<MessageTemplate> {
@@ -222,7 +222,7 @@ export async function saveTemplate(t: { id?: string; service: ServiceKey; niche:
         ? supabase.from("message_templates").update(payload).eq("id", t.id).select("*").single()
         : supabase.from("message_templates").insert(payload).select("*").single(),
     );
-    return toTemplate(row);
+    return toTemplate(row!);
   } catch (err) {
     if (err instanceof AppError && err.code === "DUPLICATE") {
       throw new AppError("DUPLICATE", "Já existe um modelo para esse serviço e nicho. Edite o existente.", err);

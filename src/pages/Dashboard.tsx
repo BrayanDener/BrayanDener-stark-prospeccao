@@ -1,7 +1,6 @@
-import { useMemo } from "react";
 import { CalendarCheck, Check, Handshake, History, MessageCircleReply, Search, Send, Trophy, UsersRound } from "lucide-react";
 import { Link } from "react-router-dom";
-import { toast } from "sonner";
+import { CrmFunnel } from "@/components/crm/CrmFunnel";
 import { SearchItem, SearchItemSkeleton } from "@/components/searches/SearchItem";
 import { WhatsAppIcon } from "@/components/stark/BrandIcons";
 import { EmptyState } from "@/components/stark/EmptyState";
@@ -11,13 +10,9 @@ import { PageHeader } from "@/components/stark/PageHeader";
 import { StatusBadge } from "@/components/stark/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { STATUSES } from "@/config/status";
-import { useSimulatedLoad } from "@/hooks/use-simulated-load";
-import { isFollowUpOverdue } from "@/lib/filters";
+import { useCompleteFollowUp, useDashboard, useDueFollowups, useSearches } from "@/data/queries";
 import { formatNumber, formatPercent, formatRelativeDay, greeting } from "@/lib/format";
-import { computeMetrics, countByStatus, dueFollowUps } from "@/lib/metrics";
 import { cn } from "@/lib/utils";
-import { useApp } from "@/store/app-store";
 import { useUI } from "@/store/ui-store";
 
 function Panel({ title, icon: Icon, aside, children, className }: { title: string; icon: typeof Search; aside?: React.ReactNode; children: React.ReactNode; className?: string }) {
@@ -34,24 +29,21 @@ function Panel({ title, icon: Icon, aside, children, className }: { title: strin
 }
 
 export default function DashboardPage() {
-  const { leads, searches, completeFollowUp, setFollowUp } = useApp();
   const { openWizard, openWhatsApp, openLead } = useUI();
-  const { status, retry } = useSimulatedLoad("dashboard");
+  const summaryQ = useDashboard();
+  const dueQ = useDueFollowups();
+  const recentQ = useSearches(5);
+  const complete = useCompleteFollowUp();
+  const s = summaryQ.data;
+  const due = dueQ.data ?? [];
+  const todayStart = s ? new Date(s.todayStart) : null;
+  const isLate = (iso: string | null) => !!iso && !!todayStart && new Date(iso) < todayStart;
 
-  const crm = useMemo(() => leads.filter((l) => l.inCrm), [leads]);
-  const metrics = useMemo(() => computeMetrics(crm), [crm]);
-  const funnel = useMemo(() => countByStatus(crm), [crm]);
-  const followUps = useMemo(() => dueFollowUps(crm), [crm]);
-  const recent = useMemo(() => [...searches].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5), [searches]);
-  const maxFunnel = Math.max(1, ...Object.values(funnel));
-  const overdue = followUps.filter((l) => isFollowUpOverdue(l)).length;
-
-  const subtitle =
-    status !== "ready"
-      ? "Carregando seu dia…"
-      : followUps.length === 0
-        ? "Nenhum follow-up pendente hoje. Bom momento para uma nova busca."
-        : `Você tem ${followUps.length} follow-up${followUps.length > 1 ? "s" : ""} para hoje${overdue ? `, ${overdue} atrasado${overdue > 1 ? "s" : ""}` : ""}.`;
+  const subtitle = !s
+    ? "Carregando seu dia…"
+    : s.followupsDue === 0
+      ? "Nenhum follow-up pendente hoje. Bom momento para uma nova busca."
+      : `Você tem ${s.followupsDue} follow-up${s.followupsDue > 1 ? "s" : ""} para hoje${s.followupsOverdue ? `, ${s.followupsOverdue} atrasado${s.followupsOverdue > 1 ? "s" : ""}` : ""}.`;
 
   return (
     <div>
@@ -65,22 +57,22 @@ export default function DashboardPage() {
         }
       />
 
-      {status === "error" ? (
-        <ErrorState onRetry={retry} />
+      {summaryQ.isError ? (
+        <ErrorState onRetry={() => void summaryQ.refetch()} />
       ) : (
         <div className="space-y-4 md:space-y-6">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-            {status === "loading" ? (
+            {!s ? (
               Array.from({ length: 5 }, (_, i) => <MetricCardSkeleton key={i} className={cn(i === 4 && "col-span-2 lg:col-span-1")} />)
             ) : (
               <>
-                <MetricCard label="Total de leads" value={formatNumber(metrics.total)} icon={UsersRound} hint="no seu CRM" />
-                <MetricCard label="Contatados" value={formatNumber(metrics.contacted)} icon={Send} hint="já receberam mensagem" />
-                <MetricCard label="Em negociação" value={formatNumber(metrics.negotiating)} icon={Handshake} hint="propostas em aberto" />
-                <MetricCard label="Fechados" value={formatNumber(metrics.closed)} icon={Trophy} hint="clientes conquistados" accent />
+                <MetricCard label="Total de leads" value={formatNumber(s.totalLeads)} icon={UsersRound} hint="encontrados nas buscas" />
+                <MetricCard label="Contatados" value={formatNumber(s.contacted)} icon={Send} hint="já receberam contato" />
+                <MetricCard label="Em negociação" value={formatNumber(s.negotiating)} icon={Handshake} hint="propostas em aberto" />
+                <MetricCard label="Fechados" value={formatNumber(s.closed)} icon={Trophy} hint={`${formatNumber(s.closedThisMonth)} este mês`} accent />
                 <MetricCard
                   label="Taxa de resposta"
-                  value={formatPercent(metrics.responseRate)}
+                  value={s.contacted === 0 ? "—" : formatPercent(s.replied / s.contacted)}
                   icon={MessageCircleReply}
                   hint="responderam ÷ contatados"
                   className="col-span-2 lg:col-span-1"
@@ -93,9 +85,9 @@ export default function DashboardPage() {
             <Panel
               title="Follow-ups de hoje"
               icon={CalendarCheck}
-              aside={status === "ready" && followUps.length > 0 && <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">{followUps.length}</span>}
+              aside={due.length > 0 && <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">{due.length}</span>}
             >
-              {status === "loading" ? (
+              {dueQ.isLoading ? (
                 <div className="space-y-2">
                   {Array.from({ length: 4 }, (_, i) => (
                     <div key={i} className="flex items-center gap-3 py-2">
@@ -108,12 +100,14 @@ export default function DashboardPage() {
                     </div>
                   ))}
                 </div>
-              ) : followUps.length === 0 ? (
+              ) : dueQ.isError ? (
+                <ErrorState description="Não conseguimos carregar os follow-ups." onRetry={() => void dueQ.refetch()} className="py-8" />
+              ) : due.length === 0 ? (
                 <EmptyState icon={CalendarCheck} title="Tudo em dia" description="Nenhum follow-up para hoje." className="py-8" />
               ) : (
                 <ul className="-mx-2 divide-y divide-border">
-                  {followUps.map((l) => {
-                    const late = isFollowUpOverdue(l);
+                  {due.map((l) => {
+                    const late = isLate(l.followUpAt);
                     return (
                       <li key={l.id} className={cn("relative flex items-center gap-3 rounded-md px-2 py-3", late && "bg-warning/[0.06]")}>
                         {late && <span aria-hidden className="absolute bottom-3 left-0 top-3 w-[2px] rounded-full bg-warning" />}
@@ -124,25 +118,14 @@ export default function DashboardPage() {
                           <div className="mt-1 flex flex-wrap items-center gap-2">
                             <StatusBadge status={l.status} />
                             <span className={cn("text-xs", late ? "font-medium text-warning" : "text-muted-foreground")}>
-                              {late ? `Atrasado · ${formatRelativeDay(l.nextFollowUpAt!)}` : "Hoje"}
+                              {late ? `Atrasado · ${formatRelativeDay(l.followUpAt!)}` : "Hoje"}
                             </span>
                           </div>
                         </div>
-                        <Button variant="secondary" size="icon" aria-label={`WhatsApp para ${l.name}`} disabled={!l.phone} onClick={() => openWhatsApp(l.id)}>
+                        <Button variant="secondary" size="icon" aria-label={`WhatsApp para ${l.name}`} disabled={l.phoneType === "nenhum"} onClick={() => openWhatsApp(l.id)}>
                           <WhatsAppIcon className="text-whatsapp" />
                         </Button>
-                        <Button
-                          variant="secondary"
-                          className="px-3"
-                          onClick={() => {
-                            const prev = l.nextFollowUpAt;
-                            completeFollowUp(l.id);
-                            toast.success("Follow-up concluído", {
-                              description: l.name,
-                              action: { label: "Desfazer", onClick: () => setFollowUp(l.id, prev) },
-                            });
-                          }}
-                        >
+                        <Button variant="secondary" className="px-3" onClick={() => complete.mutate(l)}>
                           <Check /> <span className="hidden sm:inline">Concluir</span>
                         </Button>
                       </li>
@@ -162,40 +145,27 @@ export default function DashboardPage() {
                   </Link>
                 }
               >
-                {status === "loading" ? (
+                {recentQ.isLoading ? (
                   <ul className="-mx-2">
                     {Array.from({ length: 3 }, (_, i) => (
                       <SearchItemSkeleton key={i} />
                     ))}
                   </ul>
-                ) : recent.length === 0 ? (
+                ) : recentQ.isError ? (
+                  <ErrorState description="Não conseguimos carregar as buscas." onRetry={() => void recentQ.refetch()} className="py-6" />
+                ) : (recentQ.data ?? []).length === 0 ? (
                   <EmptyState icon={Search} title="Nenhuma busca ainda" action={<Button onClick={() => openWizard()}>Fazer a primeira busca</Button>} className="py-8" />
                 ) : (
                   <ul className="-mx-2">
-                    {recent.map((s) => (
-                      <SearchItem key={s.id} search={s} />
+                    {(recentQ.data ?? []).map((search) => (
+                      <SearchItem key={search.id} search={search} />
                     ))}
                   </ul>
                 )}
               </Panel>
 
               <Panel title="Funil" icon={UsersRound}>
-                <ul className="space-y-3">
-                  {STATUSES.map((s) => (
-                    <li key={s.key} className="grid grid-cols-[96px_minmax(0,1fr)_32px] items-center gap-3 text-sm">
-                      <span className="truncate text-muted-foreground">{s.label}</span>
-                      <span className="h-2 overflow-hidden rounded-full bg-surface-2">
-                        {status === "ready" && (
-                          <span
-                            className={cn("block h-full rounded-full transition-[width] duration-700 ease-out", s.bar)}
-                            style={{ width: `${(funnel[s.key] / maxFunnel) * 100}%` }}
-                          />
-                        )}
-                      </span>
-                      <span className="text-right font-semibold tabular-nums">{status === "ready" ? funnel[s.key] : "–"}</span>
-                    </li>
-                  ))}
-                </ul>
+                <CrmFunnel funnel={s?.funnel} />
               </Panel>
             </div>
           </div>

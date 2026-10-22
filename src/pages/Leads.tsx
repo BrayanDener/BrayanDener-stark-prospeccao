@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpDown, FilterX, LayoutList, Map as MapIcon, MapPin, Search, SearchX, SlidersHorizontal, Store, UsersRound } from "lucide-react";
-import { Link, useSearchParams } from "react-router-dom";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUpDown, Database, Download, FilterX, LayoutList, Loader2, Map as MapIcon, MapPin, RefreshCw, Search, SearchX, SlidersHorizontal, Store, UsersRound } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { toast } from "sonner";
 import { LeadCard, LeadCardSkeleton } from "@/components/leads/LeadCard";
 import { EmptyState } from "@/components/stark/EmptyState";
 import { ErrorState } from "@/components/stark/ErrorState";
@@ -14,51 +16,62 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { getNiche } from "@/config/niches";
 import { getService } from "@/config/services";
 import { STATUSES, getStatus } from "@/config/status";
-import { useSimulatedLoad } from "@/hooks/use-simulated-load";
+import { runSearch } from "@/data/api";
+import { qk, useAllLeads, useSearch, useSearchLeads, useSettings } from "@/data/queries";
+import { errorMessage } from "@/lib/errors";
 import { SORT_OPTIONS, applyListFilters, applyServiceFilter, isContacted, sortLeads, type LeadListFilters, type SortKey } from "@/lib/filters";
-import { formatNumber, formatRelativeDay } from "@/lib/format";
+import { formatDayMonth, formatNumber, formatRelativeDay } from "@/lib/format";
 import { scoreLead } from "@/lib/score";
 import { cn } from "@/lib/utils";
-import { useApp } from "@/store/app-store";
 import { useUI } from "@/store/ui-store";
-import type { LeadStatus, Search as SearchType } from "@/types";
+import type { Lead, LeadStatus, Search as SearchType, ServiceKey } from "@/types";
 
+const LeadsMap = lazy(() => import("@/components/leads/LeadsMap"));
 const PAGE = 30;
 
 export default function LeadsPage() {
   const [params] = useSearchParams();
   const searchId = params.get("busca");
-  const { leads, getSearch, settings } = useApp();
   const { openWizard } = useUI();
-  const search = searchId ? getSearch(searchId) : undefined;
-  const { status, retry } = useSimulatedLoad(`leads:${searchId ?? "todos"}`);
+  const { data: settings } = useSettings();
+  const searchQ = useSearch(searchId);
+  const searchLeadsQ = useSearchLeads(searchId);
+  const allLeadsQ = useAllLeads(!searchId);
+  const search = searchQ.data ?? undefined;
 
-  const defaultFilters: LeadListFilters = { query: "", status: "todos", noSite: false, mobileOnly: false, hideContacted: settings.hideContacted };
+  const hideDefault = settings?.hideContacted ?? true;
+  const defaultFilters: LeadListFilters = { query: "", status: "todos", noSite: false, mobileOnly: false, hideContacted: hideDefault };
   const [filters, setFilters] = useState<LeadListFilters>(defaultFilters);
   const [sort, setSort] = useState<SortKey>("score");
   const [view, setView] = useState<"lista" | "mapa">("lista");
-  const [showRemoved, setShowRemoved] = useState(false);
+  const [showAllLocal, setShowAllLocal] = useState(false);
   const [limit, setLimit] = useState(PAGE);
 
   // Nova busca → filtros e paginação voltam ao padrão.
   useEffect(() => {
-    setFilters({ query: "", status: "todos", noSite: false, mobileOnly: false, hideContacted: settings.hideContacted });
-    setShowRemoved(false);
+    setFilters({ query: "", status: "todos", noSite: false, mobileOnly: false, hideContacted: hideDefault });
+    setShowAllLocal(false);
     setLimit(PAGE);
-  }, [searchId, settings.hideContacted]);
+  }, [searchId, hideDefault]);
 
-  const base = useMemo(() => (search ? leads.filter((l) => l.searchId === search.id) : leads), [leads, search]);
-  const { qualified } = useMemo(
-    () => (search ? applyServiceFilter(base, search.service, { ...settings, ignoreFilter: search.ignoreFilter || showRemoved }) : { qualified: base, removed: 0 }),
-    [base, search, settings, showRemoved],
+  const leadsQ = searchId ? searchLeadsQ : allLeadsQ;
+  const base = useMemo(() => leadsQ.data ?? [], [leadsQ.data]);
+  const minReviewsBusy = settings?.minReviewsBusy ?? 50;
+  const showAll = !!search?.showAll || showAllLocal;
+  const serviceOf = (l: Lead): ServiceKey => search?.service ?? l.lastService ?? "outro";
+
+  const filtered = useMemo(
+    () => (search ? applyServiceFilter(base, search.service, { minReviewsBusy, showAll }) : { visible: base, removed: 0, outside: new Set<string>() }),
+    [base, search, minReviewsBusy, showAll],
   );
-  const removedByFilter = search && !search.ignoreFilter ? applyServiceFilter(base, search.service, settings).removed : 0;
-  const scores = useMemo(() => new Map(qualified.map((l) => [l.id, scoreLead(l, l.service, settings).score])), [qualified, settings]);
-  const contactedCount = qualified.filter(isContacted).length;
-  const visible = useMemo(() => sortLeads(applyListFilters(qualified, filters), sort, (l) => scores.get(l.id) ?? 0), [qualified, filters, sort, scores]);
+  const scores = useMemo(() => new Map(filtered.visible.map((l) => [l.id, scoreLead(l, serviceOf(l)).total])), [filtered.visible, search]);
+  const contactedCount = filtered.visible.filter(isContacted).length;
+  const visible = useMemo(() => sortLeads(applyListFilters(filtered.visible, filters), sort, (l) => scores.get(l.id) ?? 0), [filtered.visible, filters, sort, scores]);
 
   const hasActiveFilters = filters.query !== "" || filters.status !== "todos" || filters.noSite || filters.mobileOnly;
   const set = <K extends keyof LeadListFilters>(key: K, value: LeadListFilters[K]) => setFilters((f) => ({ ...f, [key]: value }));
+
+  const status: "loading" | "error" | "ready" = (searchId && searchQ.isLoading) || leadsQ.isLoading ? "loading" : leadsQ.isError || searchQ.isError ? "error" : "ready";
 
   // Cascata de entrada só na primeira renderização da lista.
   const animatedOnce = useRef(false);
@@ -67,13 +80,23 @@ export default function LeadsPage() {
     if (status === "ready") animatedOnce.current = true;
   }, [status]);
 
-  if (searchId && !search) {
+  const exportXlsx = async () => {
+    try {
+      const { exportLeadsXlsx } = await import("@/lib/export-xlsx");
+      await exportLeadsXlsx(visible, { scores, city: search?.city ?? "todas", niche: search ? (getNiche(search.niche)?.label ?? search.niche) : "todos" });
+    } catch (err) {
+      console.error("[export]", err);
+      toast.error("Não foi possível gerar a planilha agora.");
+    }
+  };
+
+  if (searchId && searchQ.isSuccess && !search) {
     return (
       <div className="pt-8">
         <EmptyState
           icon={SearchX}
           title="Busca não encontrada"
-          description="Ela pode ter expirado ou o link está incompleto."
+          description="Ela pode ter sido apagada ou o link está incompleto."
           action={
             <div className="flex flex-wrap justify-center gap-2">
               <Button variant="secondary" asChild>
@@ -91,8 +114,16 @@ export default function LeadsPage() {
 
   return (
     <div>
-      {search ? (
-        <SearchContext search={search} onEdit={() => openWizard({ initial: search, step: 1 })} />
+      {searchId ? (
+        search ? (
+          <SearchContext search={search} onEdit={() => openWizard({ initial: { service: search.service, city: search.city, niche: search.niche, showAll: search.showAll }, step: 1 })} />
+        ) : (
+          <div className="space-y-3 pb-4 pt-2 md:pt-8">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-8 w-64" />
+            <Skeleton className="h-8 w-80 max-w-full" />
+          </div>
+        )
       ) : (
         <PageHeader
           title="Leads"
@@ -105,6 +136,8 @@ export default function LeadsPage() {
         />
       )}
 
+      {search?.fromCache && <CacheNotice search={search} />}
+
       {/* Resumo */}
       <div className="mb-1 min-h-6 text-sm text-muted-foreground" aria-live="polite">
         {status === "loading" ? (
@@ -112,17 +145,21 @@ export default function LeadsPage() {
         ) : status === "ready" ? (
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span>
-              <span className="font-semibold tabular-nums text-foreground">{formatNumber(qualified.length)}</span> {search && !search.ignoreFilter && !showRemoved ? "leads qualificados" : "leads"}
+              <span className="font-semibold tabular-nums text-foreground">{formatNumber(filtered.visible.length)}</span>{" "}
+              {search && !showAll ? "leads qualificados" : "leads"}
             </span>
-            {removedByFilter > 0 && (
+            {filtered.removed > 0 && (
               <>
                 <span aria-hidden>·</span>
                 <span>
-                  <span className="tabular-nums">{removedByFilter}</span> {showRemoved ? "fora do filtro (exibidos)" : "removidos pelo filtro"}
+                  <span className="tabular-nums">{filtered.removed}</span> {filtered.removed === 1 ? "empresa removida" : "empresas removidas"} pelo filtro
+                  {showAll && " (exibidas)"}
                 </span>
-                <button type="button" onClick={() => setShowRemoved((v) => !v)} className="font-medium text-primary hover:text-primary-hover">
-                  {showRemoved ? "Aplicar filtro" : "Mostrar todos"}
-                </button>
+                {!search?.showAll && (
+                  <button type="button" onClick={() => setShowAllLocal((v) => !v)} className="font-medium text-primary hover:text-primary-hover">
+                    {showAllLocal ? "Aplicar filtro" : "Mostrar todas"}
+                  </button>
+                )}
               </>
             )}
             <span aria-hidden>·</span>
@@ -144,12 +181,15 @@ export default function LeadsPage() {
             label="Visualização"
             value={view}
             onChange={setView}
+            iconOnlyMobile
             options={[
               { value: "lista", label: "Lista", icon: LayoutList },
               { value: "mapa", label: "Mapa", icon: MapIcon },
             ]}
-            iconOnlyMobile
           />
+          <Button variant="secondary" size="icon" className="md:h-9 md:w-9" onClick={exportXlsx} disabled={visible.length === 0} aria-label="Exportar .xlsx" title="Exportar .xlsx">
+            <Download />
+          </Button>
         </div>
         <div className="-mx-4 mt-3 flex gap-2 overflow-x-auto px-4 no-scrollbar md:mx-0 md:flex-wrap md:px-0">
           <DropdownMenu modal={false}>
@@ -213,34 +253,39 @@ export default function LeadsPage() {
           </div>
         )}
 
-        {status === "error" && <ErrorState description="Não conseguimos carregar os leads desta busca. Seus dados estão seguros." onRetry={retry} />}
+        {status === "error" && (
+          <ErrorState
+            description="Não conseguimos carregar os leads. Seus dados estão seguros."
+            onRetry={() => {
+              void leadsQ.refetch();
+              void searchQ.refetch();
+            }}
+          />
+        )}
 
         {status === "ready" && view === "mapa" && (
-          <div className="glass flex min-h-[360px] flex-col items-center justify-center p-6 text-center">
-            <EmptyState
-              icon={MapIcon}
-              title="Mapa em breve"
-              description={`Os ${formatNumber(visible.length)} leads desta lista vão aparecer no mapa em uma próxima etapa.`}
-              action={
-                <Button variant="secondary" onClick={() => setView("lista")}>
-                  <LayoutList /> Voltar para a lista
-                </Button>
-              }
-            />
-          </div>
+          <Suspense fallback={<Skeleton className="h-[60dvh] min-h-[360px] w-full rounded-lg" />}>
+            <LeadsMap leads={visible} scores={scores} center={search?.lat != null && search?.lng != null ? { lat: search.lat, lng: search.lng } : null} />
+          </Suspense>
         )}
 
         {status === "ready" && view === "lista" && (
           <>
-            {qualified.length === 0 ? (
+            {filtered.visible.length === 0 ? (
               <EmptyState
                 icon={search ? FilterX : UsersRound}
-                title={search ? "Nenhuma empresa passou no filtro" : "Nenhum lead ainda"}
-                description={search ? "Todas as empresas encontradas já atendem o que você oferece. Veja todos os resultados ou mude o serviço." : "Faça sua primeira busca para encontrar empresas."}
+                title={search ? (base.length === 0 ? "Nenhuma empresa nesta busca" : "Nenhuma empresa passou no filtro") : "Nenhum lead ainda"}
+                description={
+                  search
+                    ? base.length === 0
+                      ? "Tente outro nicho ou uma cidade vizinha."
+                      : "Todas as empresas encontradas já atendem o que você oferece. Veja todas ou mude o serviço."
+                    : "Faça sua primeira busca para encontrar empresas."
+                }
                 action={
-                  search ? (
-                    <Button variant="secondary" onClick={() => setShowRemoved(true)}>
-                      Mostrar todos os resultados
+                  search && base.length > 0 ? (
+                    <Button variant="secondary" onClick={() => setShowAllLocal(true)}>
+                      Mostrar todas
                     </Button>
                   ) : (
                     <Button onClick={() => openWizard()}>
@@ -253,7 +298,7 @@ export default function LeadsPage() {
               <EmptyState
                 icon={FilterX}
                 title="Nenhum lead com esses filtros"
-                description={filters.hideContacted && !hasActiveFilters ? "Todos os leads desta busca já foram contatados." : "Tente remover algum filtro."}
+                description={filters.hideContacted && !hasActiveFilters ? "Todos os leads desta lista já foram contatados." : "Tente remover algum filtro."}
                 action={
                   <Button variant="secondary" onClick={() => setFilters({ ...defaultFilters, hideContacted: false })}>
                     Limpar filtros
@@ -264,7 +309,7 @@ export default function LeadsPage() {
               <>
                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                   {visible.slice(0, limit).map((lead, i) => (
-                    <LeadCard key={lead.id} lead={lead} score={scores.get(lead.id) ?? 0} index={i} animateIn={animateIn} />
+                    <LeadCard key={lead.id} lead={lead} score={scores.get(lead.id) ?? 0} index={i} animateIn={animateIn} outsideFilter={showAll && filtered.outside.has(lead.id)} />
                   ))}
                 </div>
                 {visible.length > limit && (
@@ -308,6 +353,43 @@ function SearchContext({ search, onEdit }: { search: SearchType; onEdit: () => v
           <Store className="h-4 w-4" aria-hidden /> {getNiche(search.niche)?.label}
         </span>
       </div>
+    </div>
+  );
+}
+
+/** "Resultados salvos em 12/10 · Atualizar do Google" (reenvia com forceRefresh). */
+function CacheNotice({ search }: { search: SearchType }) {
+  const { data: source } = useSearch(search.sourceSearchId);
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [refreshing, setRefreshing] = useState(false);
+  const savedAt = source?.createdAt ?? search.createdAt;
+
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      const res = await runSearch({ service: search.service, city: search.city, niche: search.niche, showAll: search.showAll, forceRefresh: true });
+      qc.setQueryData(qk.searchLeads(res.searchId), res.leads);
+      void qc.invalidateQueries({ queryKey: ["searches"] });
+      void qc.invalidateQueries({ queryKey: qk.dashboard() });
+      navigate(`/leads?busca=${res.searchId}`, { replace: true });
+      toast.success("Resultados atualizados do Google", { description: `${res.totalFound} empresas · ${res.googleRequests} requisições` });
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+      <Database className="h-4 w-4 text-tertiary" aria-hidden />
+      <span>Resultados salvos em {formatDayMonth(savedAt)}</span>
+      <span aria-hidden>·</span>
+      <button type="button" onClick={refresh} disabled={refreshing} className="inline-flex items-center gap-1.5 font-medium text-primary hover:text-primary-hover disabled:opacity-60">
+        {refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <RefreshCw className="h-3.5 w-3.5" aria-hidden />}
+        {refreshing ? "Atualizando…" : "Atualizar do Google"}
+      </button>
     </div>
   );
 }

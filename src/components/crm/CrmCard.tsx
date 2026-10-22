@@ -5,8 +5,7 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { StatusMenuItems } from "@/components/leads/StatusMenuItems";
 import { getNiche } from "@/config/niches";
-import { isFollowUpOverdue } from "@/lib/filters";
-import { formatRelativeDay } from "@/lib/format";
+import { formatRelativeDay, startOfDay } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useUI } from "@/store/ui-store";
 import type { Lead } from "@/types";
@@ -18,10 +17,12 @@ interface CrmCardProps extends React.HTMLAttributes<HTMLDivElement> {
   overlay?: boolean;
 }
 
-/** Card compacto do Kanban. "Mover para…" substitui o arrastar no celular. */
+export const isOverdue = (lead: Pick<Lead, "followUpAt">) => !!lead.followUpAt && new Date(lead.followUpAt) < startOfDay(new Date());
+
+/** Card compacto do Kanban. "Mover" substitui o arrastar no celular. */
 export const CrmCard = forwardRef<HTMLDivElement, CrmCardProps>(({ lead, score, dragging, overlay, className, ...props }, ref) => {
   const { openLead } = useUI();
-  const overdue = isFollowUpOverdue(lead);
+  const overdue = isOverdue(lead);
   return (
     <div
       ref={ref}
@@ -49,14 +50,14 @@ export const CrmCard = forwardRef<HTMLDivElement, CrmCardProps>(({ lead, score, 
         <ScoreRing score={score} size="sm" />
       </div>
       <div className="mt-2.5 flex items-center justify-between gap-2">
-        {lead.nextFollowUpAt ? (
+        {lead.followUpAt ? (
           <span
             className={cn("inline-flex min-w-0 items-center gap-1 text-xs font-medium", overdue ? "text-warning" : "text-muted-foreground")}
-            title={`Follow-up ${formatRelativeDay(lead.nextFollowUpAt)}`}
+            title={`Follow-up ${formatRelativeDay(lead.followUpAt)}`}
           >
             <CalendarClock className="h-3.5 w-3.5 shrink-0" aria-hidden />
             <span className="truncate first-letter:uppercase">
-              {overdue ? `Atrasado · ${formatRelativeDay(lead.nextFollowUpAt).replace("há ", "")}` : formatRelativeDay(lead.nextFollowUpAt)}
+              {overdue ? `Atrasado · ${formatRelativeDay(lead.followUpAt).replace("há ", "")}` : formatRelativeDay(lead.followUpAt)}
             </span>
           </span>
         ) : (
@@ -64,7 +65,10 @@ export const CrmCard = forwardRef<HTMLDivElement, CrmCardProps>(({ lead, score, 
         )}
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="relative z-10 -mr-1 h-11 shrink-0 gap-1.5 px-2.5 text-xs md:h-8"
+            <Button
+              variant="ghost"
+              size="sm"
+              className="relative z-10 -mr-1 h-11 shrink-0 gap-1.5 px-2.5 text-xs md:h-8"
               aria-label={`Mover ${lead.name} para outro status`}
               onPointerDown={(e) => e.stopPropagation()}
             >

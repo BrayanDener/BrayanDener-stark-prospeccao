@@ -4,7 +4,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
 import { MORE_ICON, PRIMARY_NAV, SECONDARY_NAV, type NavItem } from "@/config/nav";
 import { cn } from "@/lib/utils";
-import { endSession } from "@/store/session";
+import { useAuth } from "@/store/auth";
 import { useUI } from "@/store/ui-store";
 
 const itemClass = "flex h-full min-w-0 flex-col items-center justify-center gap-1 text-xs font-medium transition-colors duration-150";
@@ -29,6 +29,7 @@ export function BottomNav() {
   const [moreOpen, setMoreOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  const { signOut } = useAuth();
   const moreActive = SECONDARY_NAV.some((i) => location.pathname.startsWith(i.to));
   const [home, leads, crm] = PRIMARY_NAV;
   const MoreIcon = MORE_ICON;
@@ -97,8 +98,7 @@ export function BottomNav() {
               type="button"
               onClick={() => {
                 setMoreOpen(false);
-                endSession();
-                navigate("/login", { replace: true });
+                void signOut().then(() => navigate("/login", { replace: true }));
               }}
               className="flex h-14 items-center gap-3 rounded-md px-3 text-left text-base text-[#F0A3A3] active:bg-surface-2"
             >

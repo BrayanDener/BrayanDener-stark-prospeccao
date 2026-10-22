@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowLeft, ArrowRight, Check, Filter, History, Loader2, MapPin, Search, Store, X } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { FilterChip } from "@/components/stark/FilterChip";
@@ -15,7 +16,9 @@ import { SERVICES, getService, type ServiceKey } from "@/config/services";
 import { useIsDesktop } from "@/hooks/use-media-query";
 import { describeServiceFilter, normalizeText, serviceHasFilter } from "@/lib/filters";
 import { cn } from "@/lib/utils";
-import { useApp } from "@/store/app-store";
+import { runSearch } from "@/data/api";
+import { qk, useSearches, useSettings } from "@/data/queries";
+import { errorMessage } from "@/lib/errors";
 import { useUI, type WizardOpenOptions, type WizardStep } from "@/store/ui-store";
 import { WizardProgress } from "./WizardProgress";
 
@@ -67,7 +70,9 @@ interface WizardBodyProps {
 }
 
 function WizardBody({ options, onClose, onBusyChange, isDesktop }: WizardBodyProps) {
-  const { runSearch, recentCities, settings } = useApp();
+  const { data: settings } = useSettings();
+  const { data: recent } = useSearches(30);
+  const qc = useQueryClient();
   const navigate = useNavigate();
   const init = options.initial ?? {};
   const [step, setStep] = useState<WizardStep>(options.step ?? 1);
@@ -75,10 +80,29 @@ function WizardBody({ options, onClose, onBusyChange, isDesktop }: WizardBodyPro
   const [service, setService] = useState<ServiceKey | null>(init.service ?? null);
   const [city, setCity] = useState(init.city ?? "");
   const [niche, setNiche] = useState<NicheKey | null>(init.niche ?? null);
-  const [ignoreFilter, setIgnoreFilter] = useState(init.ignoreFilter ?? false);
+  const [showAll, setShowAll] = useState(init.showAll ?? false);
   const [loading, setLoading] = useState(false);
+  const [stage, setStage] = useState(0);
 
-  const cityOk = city.trim().length >= 2;
+  /** Últimas 5 cidades usadas (sem repetir). */
+  const recentCities = useMemo(() => {
+    const out: string[] = [];
+    for (const s of recent ?? []) {
+      if (!out.some((c) => normalizeText(c) === normalizeText(s.city))) out.push(s.city);
+      if (out.length === 5) break;
+    }
+    return out;
+  }, [recent]);
+
+  // Etapas de carregamento ("Localizando cidade…" → "Buscando empresas…").
+  useEffect(() => {
+    if (!loading) return;
+    setStage(0);
+    const t = window.setTimeout(() => setStage(1), 1200);
+    return () => window.clearTimeout(t);
+  }, [loading]);
+
+  const cityOk = city.trim().length >= 2 && city.trim().length <= 80;
   const canNext = step === 1 ? !!service : step === 2 ? cityOk && !!niche : true;
   const Title = isDesktop ? DialogTitle : DrawerTitle;
   const Desc = isDesktop ? DialogDescription : DrawerDescription;
@@ -93,13 +117,19 @@ function WizardBody({ options, onClose, onBusyChange, isDesktop }: WizardBodyPro
     setLoading(true);
     onBusyChange(true);
     try {
-      const id = await runSearch({ service, city: city.trim(), niche, ignoreFilter });
+      const res = await runSearch({ service, city: city.trim(), niche, showAll });
+      setStage(2);
+      qc.setQueryData(qk.searchLeads(res.searchId), res.leads);
+      void qc.invalidateQueries({ queryKey: ["searches"] });
+      void qc.invalidateQueries({ queryKey: qk.dashboard() });
+      await new Promise((r) => setTimeout(r, 350)); // "Calculando oportunidades…"
       onClose();
-      navigate(`/leads?busca=${id}`);
-      toast.success("Busca concluída", { description: `${getNiche(niche)?.label} em ${city.trim()}` });
+      navigate(`/leads?busca=${res.searchId}`);
+      toast.success(res.fromCache ? "Resultados salvos reaproveitados" : "Busca concluída", {
+        description: `${res.totalFound} empresas · ${getNiche(niche)?.label} em ${city.trim()}${res.fromCache ? " · sem custo no Google" : ""}`,
+      });
     } catch (err) {
-      console.error("[wizard] falha na busca", err);
-      toast.error("Não foi possível buscar agora", { description: "Verifique sua conexão e tente de novo." });
+      toast.error(errorMessage(err));
     } finally {
       setLoading(false);
       onBusyChange(false);
@@ -148,9 +178,9 @@ function WizardBody({ options, onClose, onBusyChange, isDesktop }: WizardBodyPro
                 service={service}
                 city={city.trim()}
                 niche={niche}
-                ignoreFilter={ignoreFilter}
-                onIgnoreFilter={setIgnoreFilter}
-                filterText={describeServiceFilter(service, settings)}
+                showAll={showAll}
+                onShowAll={setShowAll}
+                filterText={describeServiceFilter(service, { minReviewsBusy: settings?.minReviewsBusy ?? 50 })}
                 onEdit={go}
               />
             )}
@@ -176,7 +206,7 @@ function WizardBody({ options, onClose, onBusyChange, isDesktop }: WizardBodyPro
           <Button size="lg" className="ml-auto flex-1 md:flex-none md:px-6" onClick={submit} disabled={loading}>
             {loading ? (
               <>
-                <Loader2 className="animate-spin" /> Buscando empresas…
+                <Loader2 className="animate-spin" /> {["Localizando cidade…", "Buscando empresas…", "Calculando oportunidades…"][stage]}
               </>
             ) : (
               <>
@@ -298,7 +328,7 @@ function StepWhere({ city, onCity, recentCities, niche, onNiche, cityOk }: StepW
           ))}
           {filtered.length === 0 && (
             <p className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
-              <Store className="h-4 w-4" aria-hidden /> Nenhum nicho com esse nome. Os nichos ficam em src/config/niches.ts.
+              <Store className="h-4 w-4" aria-hidden /> Nenhum nicho com esse nome.
             </p>
           )}
         </div>
@@ -311,13 +341,13 @@ interface StepSummaryProps {
   service: ServiceKey;
   city: string;
   niche: NicheKey;
-  ignoreFilter: boolean;
-  onIgnoreFilter: (v: boolean) => void;
+  showAll: boolean;
+  onShowAll: (v: boolean) => void;
   filterText: string;
   onEdit: (step: WizardStep) => void;
 }
 
-function StepSummary({ service, city, niche, ignoreFilter, onIgnoreFilter, filterText, onEdit }: StepSummaryProps) {
+function StepSummary({ service, city, niche, showAll, onShowAll, filterText, onEdit }: StepSummaryProps) {
   const s = getService(service);
   const ServiceIcon = s.icon;
   const hasFilter = serviceHasFilter(service);
@@ -344,12 +374,12 @@ function StepSummary({ service, city, niche, ignoreFilter, onIgnoreFilter, filte
         })}
       </dl>
 
-      <div className={cn("rounded-lg border p-4 transition-colors duration-150", ignoreFilter || !hasFilter ? "border-border bg-surface" : "border-primary/30 bg-primary-muted")}>
+      <div className={cn("rounded-lg border p-4 transition-colors duration-150", showAll || !hasFilter ? "border-border bg-surface" : "border-primary/30 bg-primary-muted")}>
         <div className="flex items-start gap-3">
-          <Filter className={cn("mt-0.5 h-[18px] w-[18px] shrink-0", ignoreFilter || !hasFilter ? "text-tertiary" : "text-primary")} aria-hidden />
+          <Filter className={cn("mt-0.5 h-[18px] w-[18px] shrink-0", showAll || !hasFilter ? "text-tertiary" : "text-primary")} aria-hidden />
           <p className="text-sm leading-relaxed">
-            <span className="font-semibold">{ignoreFilter && hasFilter ? "Filtro desligado: " : "Filtro ativo: "}</span>
-            <span className="text-muted-foreground">{ignoreFilter && hasFilter ? "todos os resultados vão aparecer." : filterText}</span>
+            <span className="font-semibold">{showAll && hasFilter ? "Filtro desligado: " : "Filtro ativo: "}</span>
+            <span className="text-muted-foreground">{showAll && hasFilter ? "todos os resultados vão aparecer; os que não passariam ganham a tag Fora do filtro." : filterText}</span>
           </p>
         </div>
       </div>
@@ -360,7 +390,7 @@ function StepSummary({ service, city, niche, ignoreFilter, onIgnoreFilter, filte
             <span className="block font-medium">Mostrar todos os resultados</span>
             <span className="block text-muted-foreground">Ignorar o filtro do serviço</span>
           </span>
-          <Switch id="ignore-filter" checked={ignoreFilter} onCheckedChange={onIgnoreFilter} />
+          <Switch id="ignore-filter" checked={showAll} onCheckedChange={onShowAll} />
         </label>
       )}
     </div>

@@ -1,31 +1,22 @@
-import { ArrowRight, RotateCw } from "lucide-react";
+import { ArrowRight, Database, RotateCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getNiche } from "@/config/niches";
 import { getService } from "@/config/services";
-import { applyServiceFilter } from "@/lib/filters";
 import { formatDate, formatNumber, formatRelativeDay } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { useApp } from "@/store/app-store";
 import { useUI } from "@/store/ui-store";
 import type { Search } from "@/types";
-
-export function useSearchStats(search: Search) {
-  const { leads, settings } = useApp();
-  const results = leads.filter((l) => l.searchId === search.id);
-  const { qualified } = applyServiceFilter(results, search.service, { ...settings, ignoreFilter: search.ignoreFilter });
-  return { total: results.length, qualified: qualified.length };
-}
 
 /** Linha de busca (Dashboard e Histórico) com "Ver resultados" e "Refazer". */
 export function SearchItem({ search, variant = "compact" }: { search: Search; variant?: "compact" | "full" }) {
   const { openWizard } = useUI();
-  const { total, qualified } = useSearchStats(search);
   const service = getService(search.service);
   const Icon = service.icon;
   const title = `${getNiche(search.niche)?.label} em ${search.city}`;
-  const redo = () => openWizard({ initial: search, step: 3 });
+  // Refazer reabre a busca salva: dentro do prazo do cache, não chama o Google.
+  const redo = () => openWizard({ initial: { service: search.service, city: search.city, niche: search.niche, showAll: search.showAll }, step: 3 });
 
   if (variant === "compact") {
     return (
@@ -38,7 +29,7 @@ export function SearchItem({ search, variant = "compact" }: { search: Search; va
             {title}
           </Link>
           <p className="truncate text-xs text-muted-foreground">
-            {formatRelativeDay(search.createdAt)} · <span className="tabular-nums">{qualified}</span> qualificados
+            {formatRelativeDay(search.createdAt)} · <span className="tabular-nums">{search.totalQualified}</span> qualificados
           </p>
         </div>
         <Button variant="ghost" size="sm" className="relative z-10 h-11 shrink-0 md:h-9" onClick={redo}>
@@ -56,15 +47,22 @@ export function SearchItem({ search, variant = "compact" }: { search: Search; va
         </span>
         <div className="min-w-0">
           <h3 className="truncate font-display text-base font-semibold">{title}</h3>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            {service.label} · {formatDate(search.createdAt)}
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+            <span>
+              {service.label} · {formatDate(search.createdAt)}
+            </span>
+            {search.fromCache && (
+              <span className="inline-flex items-center gap-1 text-xs">
+                <Database className="h-3.5 w-3.5" aria-hidden /> do cache
+              </span>
+            )}
           </p>
           <p className="mt-2 flex flex-wrap gap-x-3 text-sm">
             <span>
-              <span className="font-semibold tabular-nums">{formatNumber(total)}</span> <span className="text-muted-foreground">encontrados</span>
+              <span className="font-semibold tabular-nums">{formatNumber(search.totalFound)}</span> <span className="text-muted-foreground">encontrados</span>
             </span>
             <span>
-              <span className="font-semibold tabular-nums text-primary-hover">{formatNumber(qualified)}</span> <span className="text-muted-foreground">qualificados</span>
+              <span className="font-semibold tabular-nums text-primary-hover">{formatNumber(search.totalQualified)}</span> <span className="text-muted-foreground">qualificados</span>
             </span>
           </p>
         </div>
@@ -73,7 +71,7 @@ export function SearchItem({ search, variant = "compact" }: { search: Search; va
         <Button variant="secondary" className="flex-1 md:flex-none" onClick={redo}>
           <RotateCw /> Refazer
         </Button>
-        <Button asChild className="flex-1 md:flex-none">
+        <Button asChild className="flex-1 md:flex-none" disabled={search.totalFound === 0}>
           <Link to={`/leads?busca=${search.id}`}>
             Ver resultados <ArrowRight />
           </Link>

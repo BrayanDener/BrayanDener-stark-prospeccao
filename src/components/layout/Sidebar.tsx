@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { PRIMARY_NAV, SECONDARY_NAV, type NavItem } from "@/config/nav";
 import { cn } from "@/lib/utils";
 import { useUI } from "@/store/ui-store";
-import { endSession } from "@/store/session";
+import { useAuth } from "@/store/auth";
 
 function SideLink({ item }: { item: NavItem }) {
   const Icon = item.icon;
@@ -35,6 +35,7 @@ function SideLink({ item }: { item: NavItem }) {
 export function Sidebar() {
   const { openWizard } = useUI();
   const navigate = useNavigate();
+  const { signOut } = useAuth();
   return (
     <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-border bg-background/80 md:flex">
       <LightLine className="absolute inset-x-0 top-0" />
@@ -59,8 +60,7 @@ export function Sidebar() {
         <button
           type="button"
           onClick={() => {
-            endSession();
-            navigate("/login", { replace: true });
+            void signOut().then(() => navigate("/login", { replace: true }));
           }}
           className="flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-surface-2/60 hover:text-foreground"
         >

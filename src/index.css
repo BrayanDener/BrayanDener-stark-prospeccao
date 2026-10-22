@@ -116,3 +116,36 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Mapa (Leaflet) no tema Stark */
+.leaflet-container {
+  font-family: Inter, system-ui, sans-serif;
+  background: hsl(var(--background));
+}
+.leaflet-bar a,
+.leaflet-bar a:hover {
+  background: hsl(var(--surface));
+  color: hsl(var(--foreground));
+  border-color: hsl(var(--border) / 0.18);
+}
+.leaflet-control-attribution {
+  background: hsl(var(--background) / 0.8) !important;
+  color: hsl(var(--muted-foreground)) !important;
+}
+.leaflet-control-attribution a {
+  color: hsl(var(--primary-hover)) !important;
+}
+.stark-popup .leaflet-popup-content-wrapper {
+  background: hsl(var(--surface));
+  color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--border) / 0.18);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.6);
+}
+.stark-popup .leaflet-popup-tip {
+  background: hsl(var(--surface));
+}
+.stark-popup .leaflet-popup-content {
+  margin: 12px;
+  font-size: 14px;
+}

@@ -6,19 +6,21 @@ import { LogoMark } from "@/components/stark/Logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { isLoggedIn, startSession } from "@/store/session";
+import { errorMessage } from "@/lib/errors";
+import { useAuth } from "@/store/auth";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const { session, loading: authLoading, signIn } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  if (isLoggedIn()) return <Navigate to="/" replace />;
+  if (!authLoading && session) return <Navigate to="/" replace />;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,10 +28,14 @@ export default function LoginPage() {
     if (password.length < 6) return setError("A senha precisa ter pelo menos 6 caracteres.");
     setError(null);
     setLoading(true);
-    // Etapa 1: login simulado. Na Etapa 2 vira supabase.auth.signInWithPassword.
-    await new Promise((r) => setTimeout(r, 700));
-    startSession(email.trim());
-    navigate("/", { replace: true });
+    try {
+      await signIn(email, password);
+      navigate("/", { replace: true });
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
