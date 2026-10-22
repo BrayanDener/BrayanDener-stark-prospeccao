@@ -26,6 +26,14 @@ npm test           # 41 testes das regras de negócio
 npm run build      # checa tipos e gera dist/ (PWA)
 ```
 
+## Publicar na Vercel
+
+1. vercel.com → *Add New… → Project* → importar `BrayanDener/BrayanDener-stark-prospeccao`.
+2. Deixar tudo como veio (o `vercel.json` já define Vite, `npm run build` e a pasta `dist`) → *Deploy*. Não precisa de variável de ambiente.
+3. Cada push na `main` publica em produção; cada pull request ganha um link de prévia.
+
+O `vercel.json` manda todas as rotas para o `index.html` (as telas do app abrem direto pelo link) e impede que o celular guarde uma versão velha do `sw.js`.
+
 O app já aponta para o projeto (URL + chave publicável). Para outro projeto, use `.env` com `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY` (veja `.env.example`). Nenhuma chave secreta fica no front.
 
 ## Como funciona
