@@ -1,95 +1,127 @@
-import { SCHEDULING_NICHES } from "@/config/niches";
+/**
+ * Score de oportunidade 0–100 (Etapa 2).
+ * Contato (até 25) + Negócio ativo (até 25) + Lacuna para o serviço (até 50).
+ * Os pesos ficam nas constantes abaixo: ajuste aqui e o app inteiro acompanha.
+ */
 import type { Lead, ServiceKey } from "@/types";
-import { getWebPresence, LOW_REVIEWS_THRESHOLD, type FilterOptions } from "./filters";
-import { daysOpen } from "./hours";
-import { isMobile } from "./phone";
 
-export type ScoreInput = Pick<Lead, "website" | "instagram" | "phone" | "rating" | "reviewCount" | "hours" | "niche">;
+export const SCORE_WEIGHTS = {
+  contato: { celular: 25, fixo: 12, nenhum: 0 },
+  ativo: {
+    /** nota ≥ 4,0 e ≥ 10 avaliações */
+    forte: { minRating: 4.0, minReviews: 10, pontos: 25 },
+    /** nota ≥ 3,5 e ≥ 5 avaliações */
+    medio: { minRating: 3.5, minReviews: 5, pontos: 15 },
+    demais: 5,
+  },
+  lacuna: {
+    sites: { nenhum: 50, rede_social: 35, site: 0 },
+    marketing: {
+      presenca: { nenhum: 25, rede_social: 15, site: 0 },
+      /** avaliações < 10 → 25 · < 30 → 15 · demais 0 */
+      avaliacoes: [
+        { below: 10, pontos: 25 },
+        { below: 30, pontos: 15 },
+      ],
+    },
+    /** automações e apps: avaliações ≥ 200 → 50 · ≥ 100 → 40 · ≥ 50 → 25 · demais 10 */
+    movimento: [
+      { atLeast: 200, pontos: 50 },
+      { atLeast: 100, pontos: 40 },
+      { atLeast: 50, pontos: 25 },
+    ],
+    movimentoDemais: 10,
+    designOutro: {
+      presenca: { nenhum: 25, rede_social: 15, site: 0 },
+      /** avaliações < 50 → 15 · demais 10 */
+      poucasAvaliacoes: { below: 50, pontos: 15 },
+      demais: 10,
+    },
+  },
+} as const;
+
+export type ScoreInput = Pick<Lead, "phoneType" | "rating" | "reviewsCount" | "websiteKind">;
 
 export interface ScoreCriterion {
-  key: string;
   label: string;
-  /** Pontos que o critério vale. */
+  pontos: number;
   max: number;
-  met: boolean;
 }
 
 export interface ScoreResult {
-  score: number;
-  criteria: ScoreCriterion[];
+  total: number;
+  criterios: ScoreCriterion[];
 }
 
-const fmt = (n: number) => n.toLocaleString("pt-BR");
+const fmtRating = (n: number) => n.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
-/**
- * Score de oportunidade (0–100) de um lead para o serviço da busca.
- * Cada serviço tem critérios que somam 100 pontos.
- */
-export function scoreLead(lead: ScoreInput, service: ServiceKey, opts: FilterOptions): ScoreResult {
-  const presence = getWebPresence(lead);
-  const mobile = isMobile(lead.phone);
+function contato(lead: ScoreInput): ScoreCriterion {
+  const w = SCORE_WEIGHTS.contato;
+  const label =
+    lead.phoneType === "celular" ? "Contato: celular (provável WhatsApp)" : lead.phoneType === "fixo" ? "Contato: só telefone fixo" : "Contato: sem telefone";
+  return { label, pontos: w[lead.phoneType], max: w.celular };
+}
+
+function ativo(lead: ScoreInput): ScoreCriterion {
+  const w = SCORE_WEIGHTS.ativo;
   const rating = lead.rating ?? 0;
-  const reviews = lead.reviewCount;
-  const openDays = daysOpen(lead.hours);
-  const min = opts.minReviews;
+  const reviews = lead.reviewsCount;
+  const resumo = lead.rating === null ? "sem nota" : `nota ${fmtRating(rating)}, ${reviews} avaliações`;
+  if (rating >= w.forte.minRating && reviews >= w.forte.minReviews) return { label: `Negócio ativo (${resumo})`, pontos: w.forte.pontos, max: w.forte.pontos };
+  if (rating >= w.medio.minRating && reviews >= w.medio.minReviews) return { label: `Negócio razoavelmente ativo (${resumo})`, pontos: w.medio.pontos, max: w.forte.pontos };
+  return { label: `Pouca atividade no Google (${resumo})`, pontos: w.demais, max: w.forte.pontos };
+}
 
-  const whatsapp: ScoreCriterion = { key: "celular", label: "Tem celular (provável WhatsApp)", max: 25, met: mobile };
+const PRESENCA_LABEL = { nenhum: "Não tem site", rede_social: "Só rede social, sem site próprio", site: "Já tem site" } as const;
 
-  let criteria: ScoreCriterion[];
+function lacuna(lead: ScoreInput, service: ServiceKey): ScoreCriterion[] {
+  const L = SCORE_WEIGHTS.lacuna;
+  const reviews = lead.reviewsCount;
   switch (service) {
     case "sites":
-      criteria = [
-        { key: "sem_site", label: "Não tem site próprio", max: 35, met: presence !== "site" },
-        whatsapp,
-        { key: "movimento", label: "20+ avaliações (tem clientela)", max: 15, met: reviews >= 20 },
-        { key: "instagram", label: "Já usa Instagram (valoriza presença online)", max: 10, met: presence === "social" },
-        { key: "nota", label: "Nota 4,0 ou mais", max: 10, met: rating >= 4 },
-        { key: "horario", label: "Horário cadastrado no Google", max: 5, met: openDays > 0 },
+      return [{ label: PRESENCA_LABEL[lead.websiteKind], pontos: L.sites[lead.websiteKind], max: L.sites.nenhum }];
+    case "marketing": {
+      const tier = L.marketing.avaliacoes.find((t) => reviews < t.below);
+      return [
+        { label: PRESENCA_LABEL[lead.websiteKind], pontos: L.marketing.presenca[lead.websiteKind], max: L.marketing.presenca.nenhum },
+        {
+          label: tier ? `Poucas avaliações (${reviews}): espaço para crescer` : `Já tem ${reviews} avaliações`,
+          pontos: tier?.pontos ?? 0,
+          max: L.marketing.avaliacoes[0].pontos,
+        },
       ];
-      break;
-    case "marketing":
-      criteria = [
-        whatsapp,
-        { key: "sem_site", label: "Não tem site próprio", max: 20, met: presence !== "site" },
-        { key: "poucas_avaliacoes", label: `Menos de ${LOW_REVIEWS_THRESHOLD} avaliações`, max: 20, met: reviews < LOW_REVIEWS_THRESHOLD },
-        { key: "movimento", label: "10+ avaliações (já tem clientes)", max: 15, met: reviews >= 10 },
-        { key: "instagram", label: "Ativo no Instagram", max: 10, met: presence === "social" || !!lead.instagram },
-        { key: "reputacao", label: "Nota abaixo de 4,5 (reputação a melhorar)", max: 10, met: lead.rating !== null && rating < 4.5 },
-      ];
-      break;
+    }
     case "automacoes":
-      criteria = [
-        { key: "movimento", label: `${fmt(min)}+ avaliações (negócio movimentado)`, max: 30, met: reviews >= min },
-        whatsapp,
-        { key: "nota", label: "Nota 4,3 ou mais", max: 15, met: rating >= 4.3 },
-        { key: "alto_volume", label: `${fmt(min * 3)}+ avaliações (alto volume)`, max: 10, met: reviews >= min * 3 },
-        { key: "site", label: "Já tem site (maturidade digital)", max: 10, met: presence === "site" },
-        { key: "dias", label: "Abre 6 dias ou mais", max: 10, met: openDays >= 6 },
+    case "apps": {
+      const tier = L.movimento.find((t) => reviews >= t.atLeast);
+      return [
+        {
+          label: tier ? `Movimento alto: ${reviews} avaliações` : `Pouco movimento: ${reviews} avaliações`,
+          pontos: tier?.pontos ?? L.movimentoDemais,
+          max: L.movimento[0].pontos,
+        },
       ];
-      break;
-    case "apps":
-      criteria = [
-        { key: "movimento", label: `${fmt(min)}+ avaliações (negócio movimentado)`, max: 30, met: reviews >= min },
-        whatsapp,
-        { key: "agenda", label: "Nicho que depende de agenda", max: 20, met: SCHEDULING_NICHES.includes(lead.niche) },
-        { key: "nota", label: "Nota 4,3 ou mais", max: 15, met: rating >= 4.3 },
-        { key: "dias", label: "Abre 6 dias ou mais", max: 10, met: openDays >= 6 },
-      ];
-      break;
+    }
     case "design":
-    case "outro":
-      criteria = [
-        { ...whatsapp, max: 30 },
-        { key: "nota", label: "Nota 4,0 ou mais", max: 20, met: rating >= 4 },
-        { key: "movimento", label: "20+ avaliações (tem clientela)", max: 20, met: reviews >= 20 },
-        { key: "sem_site", label: "Sem site ou só Instagram", max: 15, met: presence !== "site" },
-        { key: "instagram", label: "Ativo no Instagram", max: 15, met: presence === "social" || !!lead.instagram },
+    case "outro": {
+      const d = L.designOutro;
+      const poucas = reviews < d.poucasAvaliacoes.below;
+      return [
+        { label: PRESENCA_LABEL[lead.websiteKind], pontos: d.presenca[lead.websiteKind], max: d.presenca.nenhum },
+        {
+          label: poucas ? `Menos de ${d.poucasAvaliacoes.below} avaliações` : `${reviews} avaliações`,
+          pontos: poucas ? d.poucasAvaliacoes.pontos : d.demais,
+          max: d.poucasAvaliacoes.pontos,
+        },
       ];
-      break;
+    }
   }
+}
 
-  const score = Math.min(100, criteria.reduce((sum, c) => sum + (c.met ? c.max : 0), 0));
-  return { score, criteria };
+export function scoreLead(lead: ScoreInput, service: ServiceKey): ScoreResult {
+  const criterios = [contato(lead), ativo(lead), ...lacuna(lead, service)];
+  const total = Math.max(0, Math.min(100, criterios.reduce((sum, c) => sum + c.pontos, 0)));
+  return { total, criterios };
 }
 
 export type ScoreTone = "high" | "mid" | "low" | "min";

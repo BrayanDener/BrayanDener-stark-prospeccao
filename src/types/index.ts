@@ -1,66 +1,73 @@
 import type { NicheKey } from "@/config/niches";
-import type { ServiceKey } from "@/config/services";
 import type { LeadStatus } from "@/config/status";
+import type { PhoneType } from "../../supabase/functions/_shared/phone";
+import type { ServiceKey } from "../../supabase/functions/_shared/services";
+import type { WebsiteKind } from "../../supabase/functions/_shared/website";
 
-export type { NicheKey, ServiceKey, LeadStatus };
+export type { LeadStatus, NicheKey, PhoneType, ServiceKey, WebsiteKind };
 
-/** 0 = domingo … 6 = sábado. Horários "HH:MM"; close menor que open = vira a madrugada. */
-export interface DayHours {
-  day: 0 | 1 | 2 | 3 | 4 | 5 | 6;
-  open: string;
-  close: string;
-}
-export type WeeklyHours = DayHours[];
-
-export type ActivityType = "busca" | "status" | "whatsapp" | "ligacao" | "nota" | "followup";
-
-export interface Activity {
-  id: string;
-  type: ActivityType;
-  text: string;
-  at: string; // ISO
+/** Período do Google Places: day 0 = domingo. Sem `close` = aberto 24h. */
+export interface OpeningPeriod {
+  open: { day: number; hour: number; minute: number };
+  close?: { day: number; hour: number; minute: number };
 }
 
-export interface Note {
-  id: string;
-  text: string;
-  at: string; // ISO
+export interface OpeningHours {
+  periods: OpeningPeriod[];
+  /** Ex.: "segunda-feira: 09:00 – 18:00" (já em pt-BR, segunda → domingo). */
+  weekdayDescriptions: string[];
 }
 
+/** Lead + status do CRM (view v_leads). */
 export interface Lead {
   id: string;
-  searchId: string;
-  /** Serviço da busca que encontrou o lead (define o score). */
-  service: ServiceKey;
-  niche: NicheKey;
+  placeId: string;
   name: string;
-  address: string;
-  neighborhood: string;
+  address: string | null;
   city: string;
-  state: string;
-  phone: string | null;
-  /** Site informado no Google. Pode ser um link de rede social. */
+  niche: NicheKey;
+  phoneNational: string | null;
+  phoneE164: string | null;
+  phoneType: PhoneType;
   website: string | null;
-  instagram: string | null;
+  websiteKind: WebsiteKind;
   rating: number | null;
-  reviewCount: number;
-  hours: WeeklyHours | null;
+  reviewsCount: number;
+  openingHours: OpeningHours | null;
+  types: string[];
+  primaryType: string | null;
+  lat: number | null;
+  lng: number | null;
+  googleMapsUri: string | null;
+  businessStatus: string | null;
+  firstSeenAt: string;
+  lastFetchedAt: string;
   status: LeadStatus;
-  /** Lead salvo no pipeline do CRM (resultados de busca entram ao mudar status ou salvar). */
-  inCrm: boolean;
+  notes: string;
   lastContactAt: string | null;
-  nextFollowUpAt: string | null;
-  notes: Note[];
-  activities: Activity[];
-  createdAt: string;
+  repliedAt: string | null;
+  followUpAt: string | null;
+  closedAt: string | null;
+  statusUpdatedAt: string | null;
+  /** Serviço da busca mais recente que encontrou o lead (usado no score fora de uma busca). */
+  lastService: ServiceKey | null;
 }
 
 export interface Search {
   id: string;
   service: ServiceKey;
   city: string;
+  cityNormalized: string;
   niche: NicheKey;
-  ignoreFilter: boolean;
+  showAll: boolean;
+  lat: number | null;
+  lng: number | null;
+  radiusM: number | null;
+  totalFound: number;
+  totalQualified: number;
+  googleRequests: number;
+  fromCache: boolean;
+  sourceSearchId: string | null;
   createdAt: string;
 }
 
@@ -68,21 +75,57 @@ export interface SearchParams {
   service: ServiceKey;
   city: string;
   niche: NicheKey;
-  ignoreFilter: boolean;
+  showAll: boolean;
+}
+
+export type ActivityType = "status" | "whatsapp" | "ligacao" | "nota" | "followup";
+
+export interface Activity {
+  id: string;
+  leadId: string;
+  type: ActivityType;
+  description: string;
+  createdAt: string;
 }
 
 export interface MessageTemplate {
   id: string;
   service: ServiceKey;
-  name: string;
+  niche: NicheKey | null;
+  title: string;
   body: string;
+  isDefault: boolean;
   updatedAt: string;
 }
 
 export interface Settings {
   cacheDays: number;
-  minReviews: number;
+  minReviewsBusy: number;
   followUpDays: number;
   hideContacted: boolean;
   signature: string;
+}
+
+export interface DashboardSummary {
+  totalLeads: number;
+  contacted: number;
+  replied: number;
+  negotiating: number;
+  closed: number;
+  closedThisMonth: number;
+  followupsDue: number;
+  followupsOverdue: number;
+  funnel: Partial<Record<LeadStatus, number>>;
+  googleRequestsMonth: number;
+  searchesMonth: number;
+  todayStart: string;
+  tomorrowStart: string;
+}
+
+/** Estado anterior devolvido pelas funções do CRM, para o "Desfazer". */
+export interface UndoToken {
+  leadId: string;
+  previous: Record<string, unknown>;
+  activityIds: string[];
+  changed: boolean;
 }

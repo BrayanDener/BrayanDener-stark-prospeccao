@@ -17,9 +17,19 @@ interface LeadCardProps {
   /** Índice para a cascata de entrada (só na primeira renderização). */
   index?: number;
   animateIn?: boolean;
+  /** Não passa no filtro do serviço (exibido porque "Mostrar todos" está ligado). */
+  outsideFilter?: boolean;
 }
 
-export function LeadCard({ lead, score, index = 0, animateIn }: LeadCardProps) {
+/** Endereço curto: "Rua X, 123 - Bairro" (sem cidade/UF/CEP). */
+function shortAddress(address: string | null, city: string): string {
+  if (!address) return city;
+  const parts = address.split(",").map((p) => p.trim());
+  const cut = parts.findIndex((p) => p.toLowerCase().startsWith(city.toLowerCase()));
+  return (cut > 0 ? parts.slice(0, cut) : parts.slice(0, 2)).join(", ");
+}
+
+export function LeadCard({ lead, score, index = 0, animateIn, outsideFilter }: LeadCardProps) {
   const { openLead } = useUI();
   const contacted = isContacted(lead);
   return (
@@ -27,7 +37,7 @@ export function LeadCard({ lead, score, index = 0, animateIn }: LeadCardProps) {
       initial={animateIn ? { opacity: 0, y: 8 } : false}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.28, ease: "easeOut", delay: animateIn ? Math.min(index, 12) * 0.03 : 0 }}
-      className={cn("glass group relative p-3.5 transition sm:p-4-[border-color,opacity] duration-150 hover:border-border-strong", contacted && "opacity-70 hover:opacity-100")}
+      className={cn("glass group relative p-3.5 transition-[border-color,opacity] duration-150 hover:border-border-strong sm:p-4", contacted && "opacity-70 hover:opacity-100")}
     >
       <div className="flex gap-3">
         <div className="min-w-0 flex-1">
@@ -42,20 +52,16 @@ export function LeadCard({ lead, score, index = 0, animateIn }: LeadCardProps) {
           </h3>
           <p className="mt-0.5 flex items-center gap-1 truncate text-sm text-muted-foreground">
             <MapPin className="h-3.5 w-3.5 shrink-0 text-tertiary" aria-hidden />
-            <span className="truncate">
-              {lead.address} · {lead.neighborhood}
-            </span>
+            <span className="truncate">{shortAddress(lead.address, lead.city)}</span>
           </p>
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
             <StatusBadge status={lead.status} />
-            {contacted && lead.lastContactAt && (
-              <span className="text-xs text-muted-foreground">Contatado em {formatDayMonth(lead.lastContactAt)}</span>
-            )}
+            {contacted && lead.lastContactAt && <span className="text-xs text-muted-foreground">Contatado em {formatDayMonth(lead.lastContactAt)}</span>}
           </div>
         </div>
         <ScoreRing score={score} size="md" />
       </div>
-      <LeadTags lead={lead} className="mt-3" />
+      <LeadTags lead={lead} outsideFilter={outsideFilter} className="mt-3" />
       <LeadActions lead={lead} className="mt-4" />
     </motion.article>
   );

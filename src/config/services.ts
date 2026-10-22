@@ -1,6 +1,7 @@
 import { Bot, Globe, Megaphone, PenTool, Shapes, Smartphone, type LucideIcon } from "lucide-react";
+import { SERVICE_KEYS, SERVICE_LABELS, isServiceKey, type ServiceKey } from "../../supabase/functions/_shared/services";
 
-export type ServiceKey = "sites" | "marketing" | "automacoes" | "apps" | "design" | "outro";
+export { SERVICE_KEYS, isServiceKey, type ServiceKey };
 
 export interface Service {
   key: ServiceKey;
@@ -10,15 +11,17 @@ export interface Service {
   icon: LucideIcon;
 }
 
-export const SERVICES: readonly Service[] = [
-  { key: "sites", label: "Criação de Sites", filterHint: "Só empresas sem site", icon: Globe },
-  { key: "marketing", label: "Marketing Digital", filterHint: "Sem site ou com poucas avaliações", icon: Megaphone },
-  { key: "automacoes", label: "Automações / IA", filterHint: "Negócios movimentados, que precisam automatizar atendimento", icon: Bot },
-  { key: "apps", label: "Aplicativos / Sistemas", filterHint: "Negócios movimentados, que precisam de agendamento e gestão", icon: Smartphone },
-  { key: "design", label: "Design", filterHint: "Todos os resultados", icon: PenTool },
-  { key: "outro", label: "Outro", filterHint: "Todos os resultados", icon: Shapes },
-];
+const META: Record<ServiceKey, { filterHint: string; icon: LucideIcon }> = {
+  sites: { filterHint: "Só empresas sem site", icon: Globe },
+  marketing: { filterHint: "Sem site ou com poucas avaliações", icon: Megaphone },
+  automacoes: { filterHint: "Negócios movimentados, que precisam automatizar atendimento", icon: Bot },
+  apps: { filterHint: "Negócios movimentados, que precisam de agendamento e gestão", icon: Smartphone },
+  design: { filterHint: "Todos os resultados", icon: PenTool },
+  outro: { filterHint: "Todos os resultados", icon: Shapes },
+};
 
-export function getService(key: string): Service {
+export const SERVICES: readonly Service[] = SERVICE_KEYS.map((key) => ({ key, label: SERVICE_LABELS[key], ...META[key] }));
+
+export function getService(key: string | null | undefined): Service {
   return SERVICES.find((s) => s.key === key) ?? SERVICES[SERVICES.length - 1];
 }
