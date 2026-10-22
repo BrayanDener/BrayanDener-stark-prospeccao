@@ -2,7 +2,7 @@
 export function normalizeCity(value: string): string {
   return value
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/\p{M}/gu, "")
     .toLowerCase()
     .replace(/\s+/g, " ")
     .trim();

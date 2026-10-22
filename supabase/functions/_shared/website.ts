@@ -23,6 +23,22 @@ const SOCIAL_HOSTS = [
   "taplink.cc",
   "linkbio.co",
   "ifood.com.br",
+  // Plataformas de agendamento, cardápio e links de terceiros: não são um site próprio do negócio.
+  "page.link",
+  "avec.beauty",
+  "avec.app",
+  "booksy.com",
+  "trinks.com",
+  "appbarber.com.br",
+  "agendasalao.com.br",
+  "simplesagenda.com.br",
+  "goomer.app",
+  "anota.ai",
+  "menudino.com",
+  "cardapioweb.com",
+  "linkme.bio",
+  "msha.ke",
+  "bio.site",
 ];
 
 function hostOf(url: string): string | null {

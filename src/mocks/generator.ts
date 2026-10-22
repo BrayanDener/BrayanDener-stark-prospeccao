@@ -55,12 +55,12 @@ const CITY_DDD: Record<string, string> = {
 };
 
 export function dddForCity(city: string): string {
-  const key = city.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+  const key = city.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().trim();
   return CITY_DDD[key] ?? "31";
 }
 
 function slug(value: string): string {
-  return value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
 /**

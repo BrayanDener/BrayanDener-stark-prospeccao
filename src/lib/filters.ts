@@ -85,7 +85,7 @@ export function isContacted(lead: Pick<Lead, "status" | "lastContactAt">): boole
 
 /** Remove acentos e caixa para busca por nome. */
 export function normalizeText(value: string): string {
-  return value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+  return value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().trim();
 }
 
 export interface LeadListFilters {
