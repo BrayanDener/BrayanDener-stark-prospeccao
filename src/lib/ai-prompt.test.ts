@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MAX_CHARS, buildUserPrompt, cleanMessage } from "../../supabase/functions/generate-message/prompt";
-import { AiError, errorForStatus, extractText } from "../../supabase/functions/generate-message/gemini";
+import { AiError, FALLBACK_MODEL, errorForStatus, extractText, modelChain, shouldTryNext } from "../../supabase/functions/generate-message/gemini";
 
 
 describe("prompt da IA (generate-message)", () => {
@@ -41,5 +41,21 @@ describe("resposta do Gemini (generate-message)", () => {
     expect(errorForStatus(404).code).toBe("AI_NOT_CONFIGURED");
     expect(errorForStatus(429).code).toBe("AI_UNAVAILABLE");
     expect(errorForStatus(503).code).toBe("AI_UNAVAILABLE");
+  });
+});
+
+describe("reserva de modelo do Gemini", () => {
+  it("tenta principal, reserva e principal de novo", () => {
+    expect(modelChain("gemini-flash-latest")).toEqual(["gemini-flash-latest", FALLBACK_MODEL, "gemini-flash-latest"]);
+    expect(modelChain(FALLBACK_MODEL)).toEqual([FALLBACK_MODEL, FALLBACK_MODEL]);
+  });
+
+  it("só troca de modelo em sobrecarga, cota, modelo inexistente ou rede", () => {
+    expect(shouldTryNext(503)).toBe(true);
+    expect(shouldTryNext(429)).toBe(true);
+    expect(shouldTryNext(404)).toBe(true);
+    expect(shouldTryNext(null)).toBe(true);
+    expect(shouldTryNext(400)).toBe(false);
+    expect(shouldTryNext(403)).toBe(false);
   });
 });
