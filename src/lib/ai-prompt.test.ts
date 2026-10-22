@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MAX_CHARS, buildUserPrompt, cleanMessage } from "../../supabase/functions/generate-message/prompt";
+import { AiError, errorForStatus, extractText } from "../../supabase/functions/generate-message/gemini";
+
 
 describe("prompt da IA (generate-message)", () => {
   const lead = { name: "Barbearia Guerra", city: "Itabira", niche: "barbearias", rating: 5, reviews_count: 134, website_kind: "nenhum" as const };
@@ -17,5 +19,27 @@ describe("prompt da IA (generate-message)", () => {
     const out = cleanMessage(long);
     expect(out.length).toBeLessThanOrEqual(MAX_CHARS);
     expect(out.endsWith(".")).toBe(true);
+  });
+});
+
+describe("resposta do Gemini (generate-message)", () => {
+  it("junta o texto e ignora partes de raciocínio", () => {
+    const text = extractText({
+      candidates: [{ content: { parts: [{ text: "pensando...", thought: true }, { text: " Oi, tudo bem? " }] }, finishReason: "STOP" }],
+    });
+    expect(text).toBe("Oi, tudo bem?");
+  });
+
+  it("falha com AI_UNAVAILABLE se veio bloqueada ou vazia", () => {
+    expect(() => extractText({ promptFeedback: { blockReason: "SAFETY" } })).toThrow(AiError);
+    expect(() => extractText({ candidates: [{ finishReason: "MAX_TOKENS" }] })).toThrow(AiError);
+  });
+
+  it("traduz o status HTTP no erro do app", () => {
+    expect(errorForStatus(400).code).toBe("AI_NOT_CONFIGURED");
+    expect(errorForStatus(403).code).toBe("AI_NOT_CONFIGURED");
+    expect(errorForStatus(404).code).toBe("AI_NOT_CONFIGURED");
+    expect(errorForStatus(429).code).toBe("AI_UNAVAILABLE");
+    expect(errorForStatus(503).code).toBe("AI_UNAVAILABLE");
   });
 });

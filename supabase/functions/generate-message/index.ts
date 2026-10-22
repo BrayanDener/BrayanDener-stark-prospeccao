@@ -1,15 +1,14 @@
 /**
  * Edge Function "generate-message" (Etapa 4)
  * POST { leadId, service, tone? } com o JWT do usuário → { message }.
- * Lê o lead no banco (RLS do usuário) e gera uma abordagem curta com o Claude.
+ * Lê o lead no banco (RLS do usuário) e gera uma abordagem curta com o Gemini (plano grátis).
  * A chave fica no secret AI_API_KEY; nunca vai para o front.
  */
-import Anthropic from "npm:@anthropic-ai/sdk@0.131.0";
 import { authenticate, corsHeaders, errorResponse, HttpError, json } from "../_shared/http.ts";
 import { isServiceKey } from "../_shared/services.ts";
+import { AiError, DEFAULT_MODEL, generateWithGemini } from "./gemini.ts";
 import { buildUserPrompt, cleanMessage, SYSTEM_PROMPT, type LeadFacts, type Tone } from "./prompt.ts";
 
-const MODEL = "claude-opus-5-5";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 Deno.serve(async (req) => {
@@ -30,6 +29,7 @@ Deno.serve(async (req) => {
       console.error("[generate-message] secret AI_API_KEY ausente");
       throw new HttpError("AI_NOT_CONFIGURED");
     }
+    const model = Deno.env.get("AI_MODEL")?.trim() || DEFAULT_MODEL;
 
     const [{ data: lead, error: leadErr }, { data: settings }] = await Promise.all([
       supabase.from("leads").select("name, city, niche, rating, reviews_count, website_kind").eq("id", leadId).maybeSingle(),
@@ -48,47 +48,17 @@ Deno.serve(async (req) => {
     };
     const signature = settings?.signature ?? "[Seu nome], da Stark IA";
 
-    const client = new Anthropic({ apiKey, maxRetries: 1, timeout: 45_000 });
-    const response = await client.beta.messages.create({
-      model: MODEL,
-      max_tokens: 4000,
-      // Mensagem curta: esforço baixo é suficiente e responde mais rápido.
-      output_config: { effort: "low" },
-      // Se o modelo recusar por política, o próprio servidor tenta o modelo de reserva adequado.
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
+    const result = await generateWithGemini({
+      apiKey,
+      model,
       system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: buildUserPrompt(facts, service, tone, signature) }],
+      prompt: buildUserPrompt(facts, service, tone, signature),
     });
 
-    if (response.stop_reason === "refusal") {
-      console.error("[generate-message] recusa", response.stop_details);
-      throw new HttpError("AI_UNAVAILABLE", "A IA não quis gerar essa mensagem. Use o modelo pronto ou escreva a sua.");
-    }
-
-    const text = response.content
-      .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("")
-      .trim();
-    if (!text) throw new HttpError("AI_UNAVAILABLE");
-
-    return json({ message: cleanMessage(text), model: response.model });
+    return json({ message: cleanMessage(result.text), model: result.model });
   } catch (err) {
     if (err instanceof HttpError) return errorResponse(err.code, err.message);
-    if (err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError) {
-      console.error("[generate-message] chave da IA recusada", err.status);
-      return errorResponse("AI_NOT_CONFIGURED", "A chave AI_API_KEY foi recusada. Confira o secret no Supabase.");
-    }
-    if (err instanceof Anthropic.RateLimitError) {
-      console.error("[generate-message] limite de uso da IA", err.status);
-      return errorResponse("AI_UNAVAILABLE", "Muitas gerações seguidas. Espere um pouco e tente de novo.");
-    }
-    if (err instanceof Anthropic.APIError) {
-      // 529 (sobrecarga), 5xx e timeouts caem aqui.
-      console.error("[generate-message] erro da API", err.status, err.message);
-      return errorResponse("AI_UNAVAILABLE");
-    }
+    if (err instanceof AiError) return errorResponse(err.code, err.message || undefined);
     console.error("[generate-message] erro inesperado", err);
     return errorResponse("INTERNAL");
   }
