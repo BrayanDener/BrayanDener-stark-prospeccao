@@ -12,8 +12,20 @@ export class AiError extends Error {
 
 /** "gemini-flash-latest" sempre aponta para o Flash atual. Dá para fixar outro pelo secret AI_MODEL. */
 export const DEFAULT_MODEL = "gemini-flash-latest";
+/** Reserva mais leve e rápida, usada quando o principal está sobrecarregado, lento ou sem cota. */
+export const FALLBACK_MODEL = "gemini-flash-lite-latest";
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
-const TIMEOUT_MS = 30_000;
+const TIMEOUT_MS = 20_000;
+
+/** Ordem de tentativas: principal → reserva → principal de novo (após uma pausa curta). */
+export function modelChain(primary: string): string[] {
+  return primary === FALLBACK_MODEL ? [primary, primary] : [primary, FALLBACK_MODEL, primary];
+}
+
+/** Erros que valem tentar outro modelo: sobrecarga, cota do modelo, modelo inexistente, falha de rede. */
+export function shouldTryNext(status: number | null): boolean {
+  return status === null || status === 404 || status === 429 || status >= 500;
+}
 
 interface GeminiPart {
   text?: string;
@@ -67,30 +79,37 @@ export async function generateWithGemini(opts: { apiKey: string; model: string; 
     generationConfig: { temperature: 0.8, maxOutputTokens: 2048 },
   });
 
-  let res: Response | null = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const chain = modelChain(opts.model);
+  let lastStatus: number | null = null;
+  for (let i = 0; i < chain.length; i++) {
+    const model = chain[i];
+    if (i === chain.length - 1 && i > 0) await new Promise((r) => setTimeout(r, 1500));
+
+    let res: Response;
     try {
-      res = await fetch(`${ENDPOINT}/${encodeURIComponent(opts.model)}:generateContent`, {
+      res = await fetch(`${ENDPOINT}/${encodeURIComponent(model)}:generateContent`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-goog-api-key": opts.apiKey },
         body,
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
     } catch (err) {
-      console.error("[generate-message] falha de rede/timeout", (err as Error).name);
-      res = null;
+      console.error(`[generate-message] ${model}: falha de rede/timeout`, (err as Error).name);
+      lastStatus = null;
+      continue;
     }
-    // Repete uma vez só em sobrecarga (5xx) ou falha de rede.
-    if (res && res.status < 500) break;
-  }
 
-  if (!res) throw new AiError("AI_UNAVAILABLE");
-  if (!res.ok) {
+    if (res.ok) {
+      const data = (await res.json()) as GeminiResponse;
+      return { text: extractText(data), model: data.modelVersion ?? model };
+    }
+
     const detail = await res.text().catch(() => "");
-    console.error("[generate-message] erro do Gemini", res.status, detail.slice(0, 300));
-    throw errorForStatus(res.status);
+    console.error(`[generate-message] ${model}: erro do Gemini`, res.status, detail.slice(0, 200));
+    lastStatus = res.status;
+    // Chave recusada (400/401/403) não melhora trocando de modelo.
+    if (!shouldTryNext(res.status)) break;
   }
 
-  const data = (await res.json()) as GeminiResponse;
-  return { text: extractText(data), model: data.modelVersion ?? opts.model };
+  throw lastStatus === null ? new AiError("AI_UNAVAILABLE", "A IA do Google está lenta agora. Tente de novo em instantes.") : errorForStatus(lastStatus);
 }
